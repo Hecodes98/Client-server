@@ -1,1 +1,1 @@
-{"hector": {"test.txt": "test_hector.txt"}}
+{"hector": {"test.txt": "test_hector.txt", "pablo.txt": "pablo_hector.txt"}}
