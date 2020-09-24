@@ -75,7 +75,9 @@ def main():
                     if clients.get(client):
                         clients[client][name_file] = hash_file
                     else:
+                        print('pase aqui')
                         clients[client] = {name_file: hash_file}
+                        write_json('clients.json', clients)
                     socket.send_multipart([b'Y'])
                 else:
                     print('Respuesta CHECK')

@@ -1,15 +1,15 @@
 import zmq
 import sys
-
+import math
 from collections import deque
 
 from hashlib import sha256
 from hashlib import sha1
 
 from os import listdir, getcwd
-from os.path import isfile, join
+from os.path import isfile, join, getsize
 
-PS = 1024*64
+PS = 1024*64  # 64KB
 thisdir = getcwd()
 dct_files = {f: 1 for f in listdir(thisdir) if isfile(join(thisdir, f))}
 context = zmq.Context()
@@ -97,51 +97,68 @@ def download(client, file_name):
         with open(file_name, 'wb') as f:
             for hsh in dict_connections['hashes']:
                 f.write(hash_bytes[hsh])
+                del hash_bytes[hsh]
+
+
+def read_part(file_name, index):
+    bytes = 0
+    with open(file_name, 'rb') as f:
+        f.seek(index*PS)
+        bytes = f.read(PS)
+    return bytes
 
 
 def upload(client, file_name):
 
     if file_validation(file_name):
         hash_name = sha256()
-        response = request(5555, list_params=[
-                           b'client', b'upload'])
-        server_list = deque(response)
-
+        num_parts = math.ceil(getsize(file_name)/PS)
+        print(num_parts)
+        list_servers = request(5555, list_params=[
+            b'client', b'upload'])
+        num_servers = len(list_servers)
+        # server_list = deque(response)
         server_parts = {}
-        for part in response:
+        for part in list_servers:
             server_parts[part] = []
         with open(file_name, 'rb') as f:
-            dict_proxy = {
-                "fname": file_name,
-                "client": client,
-                "hash": '',
-                "list_hash": [],
-                "servers": []
-            }
-
             while True:
                 part = f.read(PS)
-                hash_part = hash_transform(part)
-                hash_name.update(part)
                 if not part:
                     break
-                address_server = server_list.popleft()
-                server_list.append(address_server)
-                server_parts[address_server].append((hash_part, part))
-                dict_proxy["list_hash"].append(hash_part)
-                dict_proxy["servers"].append(
-                    str(address_server.decode('utf-8')))
-            dict_proxy['hash'] = hash_name.hexdigest()
-            response = request(5555, list_params=[b'client',
-                                                  b'check', code(hash_name.hexdigest()), code(client), code(file_name)])
+                hash_name.update(part)
+        response = request(5555, list_params=[b'client',
+                                              b'check', code(hash_name.hexdigest()), code(client), code(file_name)])
 
-            if response == b'Y':
-                print('Archivo creado')
-            else:
-                send_parts(list_parts=server_parts)
-                response = request(5555,
-                                   list_params=[b'client', b'update', str(dict_proxy).encode('utf-8')])
-            print(response)
+        if response[0] == b'Y':
+            print('Archivo creado')
+            return
+
+        dict_proxy = {
+            "fname": file_name,
+            "client": client,
+            "hash": hash_name.hexdigest(),
+            "list_hash": [None]*num_parts,
+            "servers": [None]*num_parts
+        }
+
+        for i in range(len(list_servers)):
+            port = list_servers[i].decode('utf-8')
+            print(port)
+            socket = context.socket(zmq.REQ)
+            socket.connect("tcp://localhost:"+str(port))
+            for j in range(i, num_parts, num_servers):
+                part = read_part(file_name, index=j)
+                hash_part = hash_transform(part)
+                dict_proxy['list_hash'][j] = hash_part
+                dict_proxy['servers'][j] = str(port)
+                socket.send_multipart([b'upload', code(hash_part), part])
+                socket.recv_multipart()
+            socket.close()
+
+        response = request(5555,
+                           list_params=[b'client', b'update', str(dict_proxy).encode('utf-8')])
+        print(response)
     else:
         print("Archivo no existente")
 
